@@ -1,0 +1,98 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include "DHT.h"
+
+#define DHTPIN 5       
+#define DHTTYPE DHT21  
+#define LEDPIN 2       
+
+const char* ssid = "BALAZZO THE RICH";  
+const char* password = "GenerasiEmas2030";  
+
+const char* serverName = "http://192.168.100.8/ConnectAndroid_toMySQL/monitoring_dht21.php";  
+
+DHT dht(DHTPIN, DHTTYPE);
+
+void setup() {
+  Serial.begin(115200);
+  WiFi.begin(ssid, password);
+  
+  pinMode(LEDPIN, OUTPUT);  
+  
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.println("Menyambungkan ke WiFi...");
+  }
+  
+  Serial.println("Terhubung ke WiFi");
+  dht.begin();
+}
+
+void loop() {
+  
+  float suhu = dht.readTemperature();
+  float kelembapan = dht.readHumidity();
+  
+  // Cek apakah sensor berfungsi dengan baik
+  if (isnan(suhu) || isnan(kelembapan)) {
+    Serial.println("Gagal membaca data dari sensor DHT!");
+    return;
+  }
+
+ 
+  Serial.print("Suhu: ");
+  Serial.print(suhu);
+  Serial.print(" °C  Kelembapan: ");
+  Serial.print(kelembapan);
+  Serial.println(" %");
+
+  
+  if (suhu > 25) {
+    digitalWrite(LEDPIN, HIGH); 
+    Serial.println("LED menyala, suhu di atas 25°C!");
+  } else {
+    digitalWrite(LEDPIN, LOW);   
+    Serial.println("LED mati, suhu di bawah atau sama dengan 25°C.");
+  }
+
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+
+    http.begin(serverName);  
+
+    http.addHeader("Content-Type", "application/x-www-form-urlencoded");  
+
+   
+    String postData = "suhu=" + String(suhu) + "&kelembapan=" + String(kelembapan);
+
+    int httpResponseCode = http.POST(postData);  
+
+    
+    if (httpResponseCode > 0) {
+      String response = http.getString();  
+
+      Serial.print("HTTP Response code: ");
+      Serial.println(httpResponseCode);
+      Serial.print("Respons dari server: ");
+      Serial.println(response);
+
+      // Jika respons server berisi "Data berhasil disimpan", tampilkan status Successfully
+      if (response.indexOf("Data berhasil disimpan") >= 0) {
+        Serial.println("Status: Successfully");
+      } else {
+        Serial.println("Status: Gagal menyimpan data ke database");
+      }
+    } else {
+      Serial.print("Error kode HTTP: ");
+      Serial.println(httpResponseCode);
+      Serial.println("Status: Gagal mengirim data ke server");
+    }
+    
+    http.end(); 
+  } else {
+    Serial.println("WiFi tidak tersambung");
+  }
+
+  delay(10000); 
+}
