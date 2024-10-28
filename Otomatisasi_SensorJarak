@@ -1,0 +1,64 @@
+#include <Arduino.h>
+#include <Stepper.h>
+
+
+#define TRIG_PIN 5
+#define ECHO_PIN 18
+
+
+#define RELAY_PIN 16
+
+
+#define STEPS 200
+#define STEP_PIN_1 4    // A+
+#define STEP_PIN_2 17   // A-
+#define STEP_PIN_3 21   // B+
+#define STEP_PIN_4 22   // B-
+
+Stepper motor(STEPS, STEP_PIN_1, STEP_PIN_2, STEP_PIN_3, STEP_PIN_4);
+
+void setup() {
+  Serial.begin(115200);
+
+  // Set up Ultrasonic Sensor
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+
+  // Set up Relay
+  pinMode(RELAY_PIN, OUTPUT);
+  digitalWrite(RELAY_PIN, LOW); 
+
+  
+  motor.setSpeed(60);  
+}
+
+long readDistanceCM() {
+  // Mengirim sinyal trigger
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+  
+  // Membaca sinyal echo dan menghitung jarak
+  long duration = pulseIn(ECHO_PIN, HIGH);
+  return duration * 0.034 / 2; 
+}
+
+void loop() {
+  
+  long distance = readDistanceCM();
+  Serial.print("Distance: ");
+  Serial.print(distance);
+  Serial.println(" cm");
+
+  
+  if (distance == 15) {
+    digitalWrite(RELAY_PIN, HIGH); 
+    motor.step(50); 
+  } else {
+    digitalWrite(RELAY_PIN, LOW); 
+  }
+
+  delay(500); 
+}
