@@ -1,0 +1,117 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <HardwareSerial.h>
+#include <ESP32Servo.h> // Menggunakan library ESP32Servo
+
+HardwareSerial Ultrasonic_Sensor(2);  // Menggunakan UART2 (TX2 = GPIO17, RX2 = GPIO16 pada ESP32)
+Servo servoMotor; // Deklarasi objek servo dengan ESP32Servo
+
+const char* ssid = "BALAZZO THE RICH";         
+const char* password = "GenerasiEmas2030"; 
+const char* serverName = "http://192.168.100.8/ConnectAndroid_toMySQL/getdata.php";  
+
+unsigned char data[4] = {};
+float distance;
+const int servoPin = 4;  // Pin data untuk servo
+
+void setup() {
+    Serial.begin(115200);  
+    Ultrasonic_Sensor.begin(9600, SERIAL_8N1, 16, 17);  // Inisialisasi UART2 dengan pin RX=16, TX=17
+    pinMode(2, OUTPUT);  // LED 1
+    pinMode(5, OUTPUT);  // LED 2
+    pinMode(18, OUTPUT); // Relay channel 1
+    pinMode(19, OUTPUT); // Relay channel 2
+
+    servoMotor.attach(servoPin); // Inisialisasi servo pada pin 4
+
+    // Menghubungkan ke WiFi
+    WiFi.begin(ssid, password);
+    Serial.print("Connecting to WiFi...");
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(500);
+        Serial.print(".");
+    }
+    Serial.println("\nConnected to WiFi");
+}
+
+void sendDataToServer(float distance) {
+    if (WiFi.status() == WL_CONNECTED) {
+        HTTPClient http;
+        String serverPath = serverName;
+        serverPath += "?distance=" + String(distance);  // Menambahkan data jarak pada URL
+
+        http.begin(serverPath.c_str());  // Memulai koneksi HTTP
+        int httpResponseCode = http.GET();  // Mengirim GET request
+
+        if (httpResponseCode > 0) {
+            String response = http.getString();  // Mendapatkan respons server
+            Serial.println("Server response: " + response);
+        } else {
+            Serial.print("Error code: ");
+            Serial.println(httpResponseCode);
+        }
+        http.end(); 
+    } else {
+        Serial.println("WiFi Disconnected");
+    }
+}
+
+void controlRelaysAndServo(float distance) {
+    if (distance > 50) {
+        digitalWrite(18, HIGH); // Relay channel 1 menyala
+        delay(10000);           // Delay 10 detik
+        digitalWrite(19, HIGH); // Relay channel 2 menyala setelah 10 detik
+        delay(10000);           // Delay 10 detik sebelum mengaktifkan servo
+
+        // Menggerakkan motor servo ke sudut 90 derajat setelah kedua relay menyala
+        servoMotor.write(180);
+        Serial.println("Servo bergerak ke 180 derajat");
+    } else {
+        digitalWrite(18, LOW);  // Relay channel 1 mati
+        digitalWrite(19, LOW);  // Relay channel 2 mati
+        servoMotor.write(0);    // Kembalikan servo ke posisi 0 derajat
+        Serial.println("Servo kembali bergerak ke posisi 0 derajat");
+    }
+}
+
+void loop() {
+    do {
+        for (int i = 0; i < 4; i++) {
+            data[i] = Ultrasonic_Sensor.read();
+        }
+    } while (Ultrasonic_Sensor.read() == 0xff);
+
+    Ultrasonic_Sensor.flush();
+
+    if (data[0] == 0xff) {
+        int sum = (data[0] + data[1] + data[2]) & 0x00FF;
+        if (sum == data[3]) {
+            distance = (data[1] << 8) + data[2];
+            distance = distance / 10;
+
+            Serial.print("Distance: ");
+            Serial.println(distance);
+
+            // Kirim data ke server
+            sendDataToServer(distance);
+
+            // Logika kontrol LED berdasarkan jarak
+            if (distance > 50) {
+                digitalWrite(2, HIGH);  
+            } else {
+                digitalWrite(2, LOW);   
+            }
+
+            if (distance >= 1 && distance < 50) {
+                digitalWrite(5, HIGH);  
+            } else {
+                digitalWrite(5, LOW);   
+            }
+
+            // Kontrol relay dan servo berdasarkan jarak
+            controlRelaysAndServo(distance);
+        }
+    }
+
+    delay(100);
+}
