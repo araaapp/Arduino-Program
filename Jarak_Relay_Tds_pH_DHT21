@@ -1,0 +1,197 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <HardwareSerial.h>
+#include <Arduino.h>
+#include <Wire.h>
+#include "DHT.h"
+
+// Konfigurasi jaringan WiFi
+const char* ssid = "BALAZZO THE RICH";
+const char* password = "GenerasiEmas2030";
+const char* serverName = "http://192.168.100.8/ConnectAndroid_toMySQL/getdata_arduino.php";
+
+// Konfigurasi sensor dan relay
+HardwareSerial Ultrasonic_Sensor(2);
+unsigned char data[4] = {};
+float distance;
+const int relayPinJarak = 2;
+#define relayPin1 19
+#define relayPin2 18  
+#define PH_PIN 32
+#define TDS_PIN 34
+#define relayPinTdsPh 21
+#define DHTPIN 15
+#define DHTTYPE DHT21
+DHT dht21_sensor(DHTPIN, DHTTYPE);
+
+unsigned long previousMillisBaca = 0;  
+unsigned long previousMillisPrint = 0;
+unsigned long previousMillisRelay4 = 0;
+const long bacaInterval = 100;         
+const long printInterval = 2000;
+const long intervalRelay4 = 10000;
+int relayState = 0;  
+
+float voltage, phValue, tdsVoltage, ppmValue;
+float acidVoltage = 2023;
+float neutralVoltage = 1500;
+float phThreshold = 5.0;  
+float tdsThreshold = 50.0;
+float send_Temp;
+
+void setup()
+{
+    Serial.begin(115200);  
+    Ultrasonic_Sensor.begin(9600, SERIAL_8N1, 16, 17);  
+    Wire.begin();
+    WiFi.begin(ssid, password);
+
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(1000);
+        Serial.println("Connecting to WiFi...");
+    }
+    Serial.println("Connected to WiFi");
+
+    pinMode(relayPinJarak, OUTPUT);
+    digitalWrite(relayPinJarak, LOW);
+    dht21_sensor.begin();
+
+    pinMode(relayPin1, OUTPUT);
+    pinMode(relayPin2, OUTPUT);
+    pinMode(relayPinTdsPh, OUTPUT);
+    digitalWrite(relayPin1, LOW);
+    digitalWrite(relayPin2, LOW);
+    digitalWrite(relayPinTdsPh, LOW);
+    delay(2000);
+}
+
+void sendDataToServer(float distance, String relayStatus, float tds, float ph, float temperature) {
+    if (WiFi.status() == WL_CONNECTED) {
+        HTTPClient http;
+        http.begin(serverName);
+        http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+
+        // Pastikan nama parameter sesuai dengan yang diharapkan di PHP
+        String postData = "distance=" + String(distance) + "&relay_status=" + relayStatus + "&tds_value=" + String(tds) + "&ph_value=" + String(ph) + "&temperature=" + String(temperature);
+
+        int httpResponseCode = http.POST(postData);
+        if (httpResponseCode > 0) {
+            String response = http.getString();
+            Serial.println("Response: " + response);
+        } else {
+            Serial.print("Error code: ");
+            Serial.println(httpResponseCode);
+        }
+        http.end();
+    } else {
+        Serial.println("WiFi Disconnected");
+    }
+}
+
+void loop()
+{
+    unsigned long currentMillis = millis();
+
+    if (currentMillis - previousMillisBaca >= bacaInterval) {
+        previousMillisBaca = currentMillis;
+
+        do {
+            for (int i = 0; i < 4; i++) {
+                data[i] = Ultrasonic_Sensor.read();
+            }
+        } while (Ultrasonic_Sensor.read() == 0xff);
+
+        Ultrasonic_Sensor.flush();
+
+        if (data[0] == 0xff) {
+            int sum = (data[0] + data[1] + data[2]) & 0x00FF;
+            if (sum == data[3]) {
+                distance = (data[1] << 8) + data[2];
+                distance = distance / 10;
+            }
+        }
+    }
+
+    if (currentMillis - previousMillisPrint >= printInterval) {
+        previousMillisPrint = currentMillis;
+
+        Serial.print("Distance: ");
+        Serial.println(distance);
+
+        String relayDistanceStatus;
+        String relayStatus;
+
+        if (distance > 20) {
+            digitalWrite(relayPinJarak, HIGH);  
+            relayDistanceStatus = "ON";
+            Serial.println("Relay ON");
+        } else if (distance < 10) {
+            digitalWrite(relayPinJarak, LOW);
+            relayDistanceStatus = "OFF";
+            Serial.println("Relay OFF");
+
+            if (currentMillis - previousMillisRelay4 >= intervalRelay4) {
+                previousMillisRelay4 = currentMillis;
+
+                if (relayState == 0) {
+                    digitalWrite(relayPin1, HIGH);
+                    digitalWrite(relayPin2, LOW);
+                    relayState = 1;
+                    relayStatus = "Relay1 ON, Relay2 OFF";
+                } else if (relayState == 1) {
+                    digitalWrite(relayPin1, LOW);
+                    digitalWrite(relayPin2, HIGH);
+                    relayState = 2;
+                    relayStatus = "Relay1 OFF, Relay2 ON";
+                } else {
+                    digitalWrite(relayPin1, LOW);
+                    digitalWrite(relayPin2, LOW);
+                    relayState = 0;
+                    relayStatus = "Both Relays OFF";
+                }
+            }
+        }
+
+        Serial.println("Relay Distance Status: " + relayDistanceStatus);
+        Serial.println("Relay Status: " + relayStatus);
+
+        voltage = analogRead(PH_PIN) / 4095.0 * 3300;
+        float slope = (7.0 - 4.0) / ((neutralVoltage - 1500) / 3.0 - (acidVoltage - 1500) / 3.0);
+        float intercept = 7.0 - slope * (neutralVoltage - 1500) / 3.0;
+        phValue = slope * (voltage - 1500) / 3.0 + intercept;
+
+        Serial.print("pH Voltage: ");
+        Serial.print(voltage, 1);
+        Serial.print(" mV     pH: ");
+        Serial.println(phValue, 2);
+
+        int sensorValue = analogRead(TDS_PIN);
+        tdsVoltage = sensorValue * (3.3 / 4095.0);
+        ppmValue = tdsVoltage * 2000 / 3.3;
+
+        Serial.print("TDS Voltage: ");
+        Serial.print(tdsVoltage * 1000, 1);
+        Serial.print(" mV     TDS (ppm): ");
+        Serial.println(ppmValue);
+
+        if (ppmValue >= tdsThreshold && phValue >= phThreshold) {
+            digitalWrite(relayPinTdsPh, HIGH);
+            Serial.println("Ambang batas tercapai: Relay ON (air mengalir)");
+        } else {
+            digitalWrite(relayPinTdsPh, LOW);
+            Serial.println("Ambang batas belum tercapai: Relay OFF (air tidak mengalir)");
+        }
+
+        Serial.println();
+        Serial.println("Reading temperature data from DHT21 sensor...");
+        send_Temp = dht21_sensor.readTemperature();
+
+        if (isnan(send_Temp)) {
+            Serial.println("Failed to read from DHT sensor!");
+        } else {
+            Serial.printf("Temperature: %.2f °C\n", send_Temp);
+        }
+
+        sendDataToServer(distance, relayDistanceStatus, ppmValue, phValue, send_Temp);
+    }
+}
